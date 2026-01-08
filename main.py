@@ -66,6 +66,23 @@ METHOD_CN = {
 }
 
 
+# =============================================================================
+# 综合评估器
+#
+# 本系统对比四种异常检测方法在工业缺陷检测任务上的性能：
+#
+# 传统方法（手工特征 + 无监督学习）：
+#   1. 隔离森林 - 通过随机切分隔离异常点
+#   2. 单类SVM - 学习包围正常样本的超球面
+#   3. 高斯检测器 - 基于马氏距离判别异常
+#
+# 深度学习方法：
+#   4. PatchCore - 基于预训练CNN的patch特征匹配
+#
+# 评估指标：AUROC、AUPR、F1分数
+# =============================================================================
+
+
 class ComprehensiveEvaluator:
     """工业缺陷检测综合评估器"""
 
@@ -167,7 +184,6 @@ class ComprehensiveEvaluator:
 
         print(f"    AUROC: {auroc:.4f}, F1: {f1:.4f}")
 
-        # 选择展示样本
         normal_idx = np.where(test_labels == 0)[0][:4]
         anomaly_idx = np.where(test_labels == 1)[0][:4]
         sample_idx = np.concatenate([normal_idx, anomaly_idx])
@@ -261,7 +277,6 @@ class ComprehensiveEvaluator:
         start_time = time.time()
         with torch.no_grad():
             for batch in test_loader:
-                # 处理anomalib新版本的ImageBatch格式
                 if hasattr(batch, 'image'):
                     images = batch.image.to(device)
                     batch_labels = batch.gt_label.cpu().numpy()
@@ -273,12 +288,9 @@ class ComprehensiveEvaluator:
 
                 outputs = model(images)
 
-                # 处理anomalib新版本的InferenceBatch格式
-                # outputs[0]: pred_score, outputs[2]: anomaly_map
                 if hasattr(outputs, '__getitem__') and not isinstance(outputs, dict):
-                    # InferenceBatch格式
-                    scores = outputs[0].cpu().numpy()  # pred_score
-                    anomaly_maps_batch = outputs[2].cpu().numpy() if len(outputs) > 2 else None  # anomaly_map
+                    scores = outputs[0].cpu().numpy()
+                    anomaly_maps_batch = outputs[2].cpu().numpy() if len(outputs) > 2 else None
                 elif isinstance(outputs, dict):
                     scores = outputs['pred_scores'].cpu().numpy()
                     anomaly_maps_batch = outputs.get('anomaly_maps', None)
@@ -294,11 +306,9 @@ class ComprehensiveEvaluator:
                 all_scores.extend(scores.flatten().tolist())
                 all_labels.extend(batch_labels.flatten().tolist())
 
-                # 保存异常热力图
                 if anomaly_maps_batch is not None and len(all_anomaly_maps) < 10:
                     for i in range(min(len(anomaly_maps_batch), 10 - len(all_anomaly_maps))):
                         am = anomaly_maps_batch[i]
-                        # 确保anomaly_map是2D的
                         if am.ndim > 2:
                             am = am.squeeze()
                         if am.ndim == 2 and am.size > 0:
@@ -363,6 +373,11 @@ class ComprehensiveEvaluator:
             gc.collect()
 
         return results
+
+    # =========================================================================
+    # 可视化方法组
+    # 生成ROC曲线、PR曲线、分数分布、混淆矩阵、特征空间可视化、样本展示等
+    # =========================================================================
 
     def plot_roc_curves(self, category: str, results: Dict):
         """绘制ROC曲线对比"""
@@ -627,7 +642,6 @@ class ComprehensiveEvaluator:
 
         for i in range(n_samples):
             img = patchcore_data['test_images'][i]
-            # 确保img是uint8格式
             if img.max() <= 1:
                 img = (img * 255).astype(np.uint8)
             elif img.dtype != np.uint8:
@@ -643,12 +657,10 @@ class ComprehensiveEvaluator:
             axes[i, 1].axis('off')
             plt.colorbar(im, ax=axes[i, 1], fraction=0.046, pad=0.04)
 
-            # 生成叠加图
             am_resized = cv2.resize(am, (img.shape[1], img.shape[0]))
             am_normalized = (am_resized - am_resized.min()) / (am_resized.max() - am_resized.min() + 1e-8)
             heatmap = cv2.applyColorMap((am_normalized * 255).astype(np.uint8), cv2.COLORMAP_JET)
             heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-            # 确保两个图像都是uint8
             overlay = cv2.addWeighted(img.astype(np.uint8), 0.6, heatmap.astype(np.uint8), 0.4, 0)
             axes[i, 2].imshow(overlay)
             axes[i, 2].set_title('叠加图', fontproperties=CN_FONT_S)
@@ -658,6 +670,11 @@ class ComprehensiveEvaluator:
         plt.tight_layout()
         plt.savefig(os.path.join(self.dirs['visualizations'], f'anomaly_vis_{category}.png'), dpi=150)
         plt.close()
+
+    # =========================================================================
+    # 跨类别对比分析
+    # 汇总所有产品类别的结果，生成综合对比图表
+    # =========================================================================
 
     def plot_overall_comparison(self, all_results: Dict):
         """绘制总体对比图"""
